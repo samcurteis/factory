@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "blockWritesOutsideWorkingDirectories": true
+  },
+  "sandbox": {
+    "enabled": true,
+    "allowUnsandboxedCommands": false,
+    "excludedCommands": [
+      "git push *",
+      "gh *",
+      "pnpm test:e2e",
+      "pnpm -s test:e2e",
+      "pnpm verify:all",
+      "pnpm -s verify:all"
+    ],
+    "network": {
+      "allowedDomains": [],
+      "allowLocalBinding": true
+    }
+  }
+}
