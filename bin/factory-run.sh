@@ -35,6 +35,11 @@ pnpm install --frozen-lockfile --reporter=silent # before Claude starts, outside
 # Ports per issue, so two runs' e2e servers don't collide.
 export E2E_APP_PORT=$((5000 + issue)) E2E_STUB_PORT=$((6000 + issue))
 
+# The PR body file lives in the worktree (the write block forbids /tmp). Git ignores it,
+# so it is never committed and does not stop the worktree being cleaned up.
+exclude="$(git -C "$wt" rev-parse --git-common-dir)/info/exclude"
+grep -qx '/factory-pr-body.md' "$exclude" 2>/dev/null || echo '/factory-pr-body.md' >>"$exclude"
+
 prompt=$(
   cat <<PROMPT
 Implement GitHub issue #$issue. Read it with: gh issue view $issue
@@ -45,7 +50,9 @@ reasons outside the code), do not guess or work around it: post what you need wi
 gh issue comment $issue, add the needs-info label, and stop.
 Use one plain command per Bash call: no && or ; chains, no redirects.
 To wait for CI: gh run watch <run-id> --exit-status
-When done: commit, push the branch, and open a PR using the pr skill.
+When done: commit, push the branch, and open a PR using the pr skill. Multi-line commands
+are denied, so write the PR body with the Write tool to factory-pr-body.md in the worktree
+root, then run: gh pr create --base main --title "<title>" --body-file factory-pr-body.md
 Finish with one line: OK or FAIL, then why.
 PROMPT
 )
