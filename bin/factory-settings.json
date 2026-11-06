@@ -5,6 +5,7 @@
   "sandbox": {
     "enabled": true,
     "allowUnsandboxedCommands": false,
+    "autoAllowBashIfSandboxed": false,
     "excludedCommands": [
       "git push *",
       "gh *",

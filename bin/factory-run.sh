@@ -2,7 +2,7 @@
 # factory-run <repo-dir> <issue-number>: implement one issue in its own worktree, open a PR.
 set -euo pipefail
 bin=$(cd "$(dirname "$0")" && pwd)
-for f in progress.jq factory-settings.json; do
+for f in progress.jq factory-settings.json spec-check.sh spec-schema.json gates.md; do
   [[ -f "$bin/$f" ]] || {
     echo "missing $bin/$f" >&2
     exit 1
@@ -29,22 +29,35 @@ if [[ -d "$wt" ]]; then
   git -C "$repo" worktree remove "$wt"
 fi
 git -C "$repo" worktree add -q -B "$branch" "$wt" origin/main
+
+# Spec check first: nothing installed, nothing spent on implementing. Not ready: stop here.
+if ! spec=$("$bin/spec-check.sh" "$wt" "$issue"); then
+  git -C "$repo" worktree remove "$wt"
+  exit 1
+fi
 cd "$wt"
 pnpm install --frozen-lockfile --reporter=silent # before Claude starts, outside its sandbox
 
 # Ports per issue, so two runs' e2e servers don't collide.
 export E2E_APP_PORT=$((5000 + issue)) E2E_STUB_PORT=$((6000 + issue))
 
-# The PR body file lives in the worktree (the write block forbids /tmp). Git ignores it,
-# so it is never committed and does not stop the worktree being cleaned up.
+# Factory files live in the worktree (the write block forbids /tmp). Git ignores them,
+# so they are never committed and don't stop the worktree being cleaned up.
 exclude="$(git -C "$wt" rev-parse --git-common-dir)/info/exclude"
-grep -qx '/factory-pr-body.md' "$exclude" 2>/dev/null || echo '/factory-pr-body.md' >>"$exclude"
+for f in /factory-pr-body.md /factory-acceptance.json; do
+  grep -qx "$f" "$exclude" 2>/dev/null || echo "$f" >>"$exclude"
+done
+# The criteria list the spec check produced, for the implementer to tick off.
+jq '[.criteria[] | {id, text, check, passes: false, evidence: ""}]' "$spec" >factory-acceptance.json
 
 prompt=$(
   cat <<PROMPT
 Implement GitHub issue #$issue. Read it with: gh issue view $issue
 You are on branch $branch, in a worktree made for this run. Stay on it.
 Done means every acceptance criterion is met and the verify command in AGENTS.md exits 0.
+factory-acceptance.json lists the criteria and the check for each. Do not change any id,
+text or check. Set passes to true only after you ran that check and saw it pass, and put
+the command and its result in evidence.
 If the issue is ambiguous, or you are blocked (a command you need is denied or fails for
 reasons outside the code), do not guess or work around it: post what you need with
 gh issue comment $issue, add the needs-info label, and stop.
@@ -65,7 +78,7 @@ claude -p "$prompt" \
   "Bash(gh pr create *)" "Bash(pnpm *)" \
   "Bash(gh run watch *)" "Bash(gh run view *)" "Bash(gh run list *)" "Bash(gh pr checks *)" \
   "Bash(git status *)" "Bash(git diff *)" "Bash(git log *)" \
-  "Bash(git add *)" "Bash(git commit *)" "Bash(git push -u origin $branch)" \
+  "Bash(git add *)" "Bash(git rm *)" "Bash(git commit *)" "Bash(git push -u origin $branch)" \
   --permission-mode dontAsk \
   --max-turns 100 --max-budget-usd 10 \
   --output-format stream-json --verbose |
@@ -74,6 +87,14 @@ claude -p "$prompt" \
 status=$(tail -1 "$receipt" | jq -r '
   if .is_error then "ERROR"
   else (.result // "" | split("\n") | map(select(length > 0)) | last // "no result") end')
+# What the implementer claims, per criterion. A claim, not proof: lesson 7's reviewer checks it.
+acc="$wt/factory-acceptance.json"
+if [[ -f "$acc" ]]; then
+  cp "$acc" "${receipt%.jsonl}-acceptance.json"
+  status="$status · $(jq -r --slurpfile spec "$spec" '
+    if map({id, text, check}) != ($spec[0].criteria | map({id, text, check})) then "criteria edited"
+    else "\(map(select(.passes)) | length)/\(length) criteria claimed" end' "$acc")"
+fi
 # Pass the text as arguments, so quotes in $status can't break the AppleScript.
 osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title (item 2 of argv)' \
   -e 'end run' "$status" "factory-run #$issue"
