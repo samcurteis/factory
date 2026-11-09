@@ -2,9 +2,11 @@
 # factory-run <repo-dir> <issue-number>: implement one issue in its own worktree, open a PR.
 set -euo pipefail
 bin=$(cd "$(dirname "$0")" && pwd)
-for f in progress.jq factory-settings.json spec-check.sh spec-schema.json gates.md; do
-  [[ -f "$bin/$f" ]] || {
-    echo "missing $bin/$f" >&2
+factory=$(cd "$bin/.." && pwd)
+for f in bin/progress.jq bin/factory-settings.json bin/spec-check.sh bin/spec-schema.json bin/gates.md \
+  bin/review.sh bin/review-schema.json roles/implementer.md agents/reviewer.md .claude-plugin/plugin.json; do
+  [[ -f "$factory/$f" ]] || {
+    echo "missing $factory/$f" >&2
     exit 1
   }
 done
@@ -50,27 +52,12 @@ done
 # The criteria list the spec check produced, for the implementer to tick off.
 jq '[.criteria[] | {id, text, check, passes: false, evidence: ""}]' "$spec" >factory-acceptance.json
 
-prompt=$(
-  cat <<PROMPT
-Implement GitHub issue #$issue. Read it with: gh issue view $issue
-You are on branch $branch, in a worktree made for this run. Stay on it.
-Done means every acceptance criterion is met and the verify command in AGENTS.md exits 0.
-factory-acceptance.json lists the criteria and the check for each. Do not change any id,
-text or check. Set passes to true only after you ran that check and saw it pass, and put
-the command and its result in evidence.
-If the issue is ambiguous, or you are blocked (a command you need is denied or fails for
-reasons outside the code), do not guess or work around it: post what you need with
-gh issue comment $issue, add the needs-info label, and stop.
-Use one plain command per Bash call: no && or ; chains, no redirects.
-To wait for CI: gh run watch <run-id> --exit-status
-When done: commit, push the branch, and open a PR using the pr skill. Multi-line commands
-are denied, so write the PR body with the Write tool to factory-pr-body.md in the worktree
-root, then run: gh pr create --base main --title "<title>" --body-file factory-pr-body.md
-Finish with one line: OK or FAIL, then why.
-PROMPT
-)
+# The role (rules for every run) is a file in the factory, appended to Claude Code's own
+# system prompt. Only this run's facts go in the task.
+task="Implement GitHub issue #$issue (read it with: gh issue view $issue). Branch: $branch."
 
-claude -p "$prompt" \
+claude -p "$task" \
+  --append-system-prompt-file "$factory/roles/implementer.md" \
   --settings "$bin/factory-settings.json" \
   --allowedTools "Read,Edit,Write,Skill" \
   "Bash(gh issue view *)" "Bash(gh issue comment $issue *)" \
@@ -95,6 +82,12 @@ if [[ -f "$acc" ]]; then
     if map({id, text, check}) != ($spec[0].criteria | map({id, text, check})) then "criteria edited"
     else "\(map(select(.passes)) | length)/\(length) criteria claimed" end' "$acc")"
 fi
+
+# An independent review, if the run produced commits. It comments on the PR.
+if [[ -n "$(git -C "$wt" log --oneline origin/main..HEAD)" ]]; then
+  status="$status · review: $("$bin/review.sh" "$wt" "$issue" "$spec" || true)"
+fi
+
 # Pass the text as arguments, so quotes in $status can't break the AppleScript.
 osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title (item 2 of argv)' \
   -e 'end run' "$status" "factory-run #$issue"

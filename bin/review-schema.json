@@ -1,0 +1,40 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["criteria", "findings"],
+  "properties": {
+    "criteria": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "verdict", "ran", "observed"],
+        "properties": {
+          "id": { "type": "string" },
+          "verdict": { "enum": ["pass", "fail", "unproven"] },
+          "ran": {
+            "type": "string",
+            "description": "The command you ran, or none"
+          },
+          "observed": {
+            "type": "string",
+            "description": "What you saw, and why it does or does not prove the criterion"
+          }
+        }
+      }
+    },
+    "findings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["severity", "where", "issue"],
+        "properties": {
+          "severity": { "enum": ["blocking", "note"] },
+          "where": { "type": "string", "description": "file:line" },
+          "issue": { "type": "string" }
+        }
+      }
+    }
+  }
+}
