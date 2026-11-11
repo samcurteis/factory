@@ -38,6 +38,9 @@ if ! spec=$("$bin/spec-check.sh" "$wt" "$issue"); then
   exit 1
 fi
 cd "$wt"
+# The GitHub account the app's settings.local.json names, for this script's own gh calls.
+gh_dir=$(jq -r '.env.GH_CONFIG_DIR // empty' "$repo/.claude/settings.local.json" 2>/dev/null || true)
+if [[ -n "$gh_dir" ]]; then export GH_CONFIG_DIR="$gh_dir"; fi
 pnpm install --frozen-lockfile --reporter=silent # before Claude starts, outside its sandbox
 
 # Ports per issue, so two runs' e2e servers don't collide.
@@ -56,25 +59,57 @@ jq '[.criteria[] | {id, text, check, passes: false, evidence: ""}]' "$spec" >fac
 # system prompt. Only this run's facts go in the task.
 task="Implement GitHub issue #$issue (read it with: gh issue view $issue). Branch: $branch."
 
-claude -p "$task" \
-  --append-system-prompt-file "$factory/roles/implementer.md" \
-  --settings "$bin/factory-settings.json" \
-  --allowedTools "Read,Edit,Write,Skill" \
-  "Bash(gh issue view *)" "Bash(gh issue comment $issue *)" \
-  "Bash(gh issue edit $issue --add-label needs-info)" \
-  "Bash(gh pr create *)" "Bash(pnpm *)" \
-  "Bash(gh run watch *)" "Bash(gh run view *)" "Bash(gh run list *)" "Bash(gh pr checks *)" \
-  "Bash(git status *)" "Bash(git diff *)" "Bash(git log *)" \
-  "Bash(git add *)" "Bash(git rm *)" "Bash(git commit *)" "Bash(git push -u origin $branch)" \
-  --permission-mode dontAsk \
-  --max-turns 100 --max-budget-usd 10 \
-  --output-format stream-json --verbose |
-  tee "$receipt" | jq -r --unbuffered -f "$bin/progress.jq" || true
+# One implementer call, logged to the receipt. Extra flags (a fix round's --resume) follow the prompt.
+implement() {
+  claude -p "$@" \
+    --append-system-prompt-file "$factory/roles/implementer.md" \
+    --settings "$bin/factory-settings.json" \
+    --allowedTools "Read,Edit,Write,Skill" \
+    "Bash(gh issue view *)" "Bash(gh issue comment $issue *)" \
+    "Bash(gh issue edit $issue --add-label needs-info)" \
+    "Bash(gh pr create *)" "Bash(pnpm *)" \
+    "Bash(gh run watch *)" "Bash(gh run view *)" "Bash(gh run list *)" "Bash(gh pr checks *)" \
+    "Bash(git status *)" "Bash(git diff *)" "Bash(git log *)" \
+    "Bash(git add *)" "Bash(git rm *)" "Bash(git commit *)" "Bash(git push -u origin $branch)" \
+    --permission-mode dontAsk \
+    --max-turns 100 --max-budget-usd 10 \
+    --output-format stream-json --verbose |
+    tee -a "$receipt" | jq -r --unbuffered -f "$bin/progress.jq" || true
+}
+implement "$task"
+
+# Review. While the reviewers ask for changes, send their report back to the same
+# implementer session: at most 2 fix rounds. Each round's report is a file in runs/.
+review="not run (no commits)"
+rc=0
+if [[ -n "$(git -C "$wt" log --oneline origin/main..HEAD)" ]]; then
+  for round in 0 1 2; do
+    report="${receipt%.jsonl}-review-$round.json"
+    rc=0
+    review=$("$bin/review.sh" "$wt" "$issue" "$spec" "$report") || rc=$?
+    review=${review:-broke, see runs/}
+    # Stop on approve (0), a broken review (2), the last round, or a needs-info from the implementer.
+    if ((rc != 1 || round == 2)); then break; fi
+    if gh issue view "$issue" --json labels -q '.labels[].name' | grep -qx needs-info; then break; fi
+    fix=$(jq -r --argjson round $((round + 1)) --arg branch "$branch" '
+      "\(.reviewers) reviewers checked your branch and asked for changes (fix round \($round) of 2). They never saw your evidence.\n",
+      (.criteria[] | select(.verdict != "pass") | "- \(.id) \(.verdict): \(.observed)"),
+      (.findings[] | select(.severity == "blocking" or .criterion != "none") | "- \(.where): \(.issue)"),
+      "\nFix this on the same branch: cover each case with a test, make it pass, update factory-acceptance.json, commit, then git push -u origin \($branch). The PR updates itself: do not open another.",
+      "If you think a point is wrong, change nothing for it and say why in your final line."' "$report")
+    implement "$fix" --resume "$(tail -1 "$receipt" | jq -r .session_id)"
+  done
+  # Not approved after the last round: back to draft, so it can't be merged by mistake.
+  if ((rc != 0)); then
+    pr=$(gh pr list --head "$branch" --json number -q '.[0].number')
+    if [[ -n "$pr" ]] && gh pr ready "$pr" --undo >/dev/null 2>&1; then review="$review · PR #$pr is a draft"; fi
+  fi
+fi
 
 status=$(tail -1 "$receipt" | jq -r '
   if .is_error then "ERROR"
   else (.result // "" | split("\n") | map(select(length > 0)) | last // "no result") end')
-# What the implementer claims, per criterion. A claim, not proof: lesson 7's reviewer checks it.
+# What the implementer claims, per criterion. A claim, not proof: the reviewers check it.
 acc="$wt/factory-acceptance.json"
 if [[ -f "$acc" ]]; then
   cp "$acc" "${receipt%.jsonl}-acceptance.json"
@@ -83,10 +118,7 @@ if [[ -f "$acc" ]]; then
     else "\(map(select(.passes)) | length)/\(length) criteria claimed" end' "$acc")"
 fi
 
-# An independent review, if the run produced commits. It comments on the PR.
-if [[ -n "$(git -C "$wt" log --oneline origin/main..HEAD)" ]]; then
-  status="$status · review: $("$bin/review.sh" "$wt" "$issue" "$spec" || true)"
-fi
+status="$status · review: $review"
 
 # Pass the text as arguments, so quotes in $status can't break the AppleScript.
 osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title (item 2 of argv)' \

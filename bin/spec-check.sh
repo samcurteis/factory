@@ -57,7 +57,8 @@ prompt=$(
     "Read the code, AGENTS.md, GLOSSARY.md and docs/adr in this checkout as needed. Then report:" \
     "criteria: every acceptance criterion, in order, with the exact check (test file and case, or command) that proves it. verifiable is false if no check the implementer can run under the rules proves it." \
     "conflicts: anything the issue asks for that the rules forbid or make impossible, including human-only steps not fenced off in Out of scope. Only real collisions: if it is fine, leave it out." \
-    "questions: at most 3 decisions the issue leaves open that the user would notice if guessed wrong (what is shown, which data, what a test expects). Not naming or style. Skip anything the code, ADRs, glossary or linked issues already decide. Fewer is better: an empty list is a good result."
+    "questions: at most 3 decisions the issue leaves open that the user would notice if guessed wrong (what is shown, which data, what a test expects). Not naming or style. Skip anything the code, ADRs, glossary or linked issues already decide. Fewer is better: an empty list is a good result." \
+    "Read the issue as one spec, not as a log of edits: two statements that disagree (often hints added in different rounds) are a question, even if each is clear on its own."
 )
 result=$(claude -p "$prompt" \
   --setting-sources user --settings "$bin/factory-settings.json" \

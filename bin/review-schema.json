@@ -28,11 +28,15 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["severity", "where", "issue"],
+        "required": ["severity", "where", "issue", "criterion"],
         "properties": {
           "severity": { "enum": ["blocking", "note"] },
           "where": { "type": "string", "description": "file:line" },
-          "issue": { "type": "string" }
+          "issue": { "type": "string" },
+          "criterion": {
+            "type": "string",
+            "description": "The criterion id this finding shows is not met or not proven, or none"
+          }
         }
       }
     }
