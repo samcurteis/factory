@@ -54,7 +54,7 @@ done
 # - a finding that names a criterion makes that reviewer's pass unproven;
 # - a criterion passes only if every reviewer passed it (worst verdict wins);
 # - approve = every spec criterion passes and no finding is blocking.
-jq -s --slurpfile spec "$spec" --argjson issue "$issue" '
+jq -s --slurpfile spec "$spec" --argjson issue "$issue" --arg head "$(git rev-parse HEAD)" '
   def rank: {"pass": 0, "unproven": 1, "fail": 2}[.];
   [.[] | .structured_output as $r | {
     cost: .total_cost_usd,
@@ -63,7 +63,7 @@ jq -s --slurpfile spec "$spec" --argjson issue "$issue" '
       if .verdict == "pass" and any($r.findings[]; .criterion == $id)
       then . + {verdict: "unproven", observed: ("Said pass, but its own finding names this criterion. " + .observed)}
       else . end]}] as $runs |
-  {issue: $issue, reviewers: ($runs | length), cost_usd: ($runs | map(.cost) | add),
+  {issue: $issue, head: $head, reviewers: ($runs | length), cost_usd: ($runs | map(.cost) | add),
    criteria: [$spec[0].criteria[] | .id as $id |
      [$runs[] | first(.criteria[] | select(.id == $id)) // {id: $id, verdict: "unproven", ran: "none", observed: "No verdict given."}] as $v |
      ($v | max_by(.verdict | rank)) + {votes: ($v | map(.verdict))}],
@@ -71,7 +71,7 @@ jq -s --slurpfile spec "$spec" --argjson issue "$issue" '
   .approve = (all(.criteria[]; .verdict == "pass") and all(.findings[]; .severity != "blocking"))' \
   "${raws[@]}" >"$out"
 
-verdict=$(jq -r 'if .approve then "approve (\(.reviewers) reviewers)"
+verdict=$(jq -r 'if .approve then "approve (\(.reviewers) reviewers, \([.findings[] | select(.severity == "note")] | length) notes to read)"
   else "changes: \([.criteria[] | select(.verdict != "pass")] | length) criteria not passed, \([.findings[] | select(.severity == "blocking")] | length) blocking" end' "$out")
 
 pr=$(gh pr list --head "$branch" --json number -q '.[0].number')

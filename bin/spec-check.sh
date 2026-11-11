@@ -60,6 +60,17 @@ prompt=$(
     "questions: at most 3 decisions the issue leaves open that the user would notice if guessed wrong (what is shown, which data, what a test expects). Not naming or style. Skip anything the code, ADRs, glossary or linked issues already decide. Fewer is better: an empty list is a good result." \
     "Read the issue as one spec, not as a log of edits: two statements that disagree (often hints added in different rounds) are a question, even if each is clear on its own."
 )
+# 3. Skip the model if nothing it reads has changed since its last "ready": same prompt
+#    (issue, comments, linked issues, gates), same schema, same code on main.
+key=$({ printf '%s' "$prompt"; cat "$bin/spec-schema.json"; git rev-parse origin/main; } | shasum -a 256 | cut -c1-16)
+for f in $(ls -t "$runs/$(basename "$main")-issue-$issue-spec-"*.json 2>/dev/null); do
+  if jq -e --arg key "$key" '.ready and .key == $key' "$f" >/dev/null 2>&1; then
+    echo "spec check: inputs unchanged since $(basename "$f"), not asked again" >&2
+    echo "$f"
+    exit 0
+  fi
+done
+
 result=$(claude -p "$prompt" \
   --setting-sources user --settings "$bin/factory-settings.json" \
   --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --permission-mode dontAsk \
@@ -70,8 +81,8 @@ if ! jq -e .structured_output <<<"$result" >/dev/null; then
   exit 1
 fi
 
-# 3. Ready is computed here from the lists, never taken from the model.
-jq --argjson issue "$issue" '.structured_output + {issue: $issue, cost_usd: .total_cost_usd} |
+# 4. Ready is computed here from the lists, never taken from the model.
+jq --argjson issue "$issue" --arg key "$key" '.structured_output + {issue: $issue, cost_usd: .total_cost_usd, key: $key} |
   .ready = ((.conflicts | length) == 0 and (.questions | length) == 0
             and (.criteria | length) > 0 and all(.criteria[]; .verifiable))' <<<"$result" >"$out"
 

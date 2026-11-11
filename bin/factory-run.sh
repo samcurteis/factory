@@ -20,8 +20,30 @@ receipt="$runs/$name-$(date +%Y%m%d-%H%M%S).jsonl"
 branch="factory/issue-$issue"
 wt="$(cd "$bin/.." && pwd)/worktrees/$name"
 
-# A fresh checkout of origin/main for this run only. Your own checkout is never touched.
+# One run per issue at a time. A lock whose process is gone is left over from a crash.
+lock="$runs/$name.lock"
+if ! (set -C; echo $$ >"$lock") 2>/dev/null; then
+  if kill -0 "$(cat "$lock")" 2>/dev/null; then
+    echo "#$issue is already running (pid $(cat "$lock"))" >&2
+    exit 1
+  fi
+  echo $$ >"$lock"
+fi
+trap 'rm -f "$lock"' EXIT
+
+# Each stage is skipped when its output already exists for the same inputs:
+# spec (spec-check's cache), implement (the branch is on origin), review (approved at this HEAD).
+# A pushed branch is continued, never reset to main. To start over: git push origin --delete <branch>.
 git -C "$repo" fetch -q origin main
+start=origin/main
+if git -C "$repo" ls-remote --exit-code --heads origin "$branch" >/dev/null; then
+  git -C "$repo" fetch -q origin "$branch"
+  start="origin/$branch"
+  if git -C "$repo" merge-base --is-ancestor "$start" origin/main; then
+    echo "$branch is already merged into main. Delete it to start over: git push origin --delete $branch" >&2
+    exit 1
+  fi
+fi
 # A leftover worktree: drop it if clean, refuse if a past run kept it for inspection.
 if [[ -d "$wt" ]]; then
   if [[ -n "$(git -C "$wt" status --porcelain)" ]]; then
@@ -30,7 +52,7 @@ if [[ -d "$wt" ]]; then
   fi
   git -C "$repo" worktree remove "$wt"
 fi
-git -C "$repo" worktree add -q -B "$branch" "$wt" origin/main
+git -C "$repo" worktree add -q -B "$branch" "$wt" "$start"
 
 # Spec check first: nothing installed, nothing spent on implementing. Not ready: stop here.
 if ! spec=$("$bin/spec-check.sh" "$wt" "$issue"); then
@@ -75,14 +97,37 @@ implement() {
     --max-turns 100 --max-budget-usd 10 \
     --output-format stream-json --verbose |
     tee -a "$receipt" | jq -r --unbuffered -f "$bin/progress.jq" || true
+  session=$(jq -r 'select(.type == "result") | .session_id' "$receipt" 2>/dev/null | tail -1)
 }
-implement "$task"
+
+# The implementer session to send fix rounds to: this run's, or the last run's on a continued branch.
+session=""
+if [[ $start == origin/main ]]; then
+  implement "$task"
+else
+  echo "continuing $branch from origin: implement skipped" >&2
+  for f in $(ls -t "$runs/$name"-2*.jsonl 2>/dev/null); do
+    session=$(jq -r 'select(.type == "result") | .session_id' "$f" | tail -1)
+    if [[ -n "$session" ]]; then break; fi
+  done
+fi
+
+# Approved at exactly this commit before? Then there's nothing new to review.
+approved_at() {
+  for f in "$runs/$name"-*review-*.json; do
+    [[ $f == *-r[0-9]*.json ]] && continue
+    jq -e --arg head "$1" '.approve and .head == $head' "$f" >/dev/null 2>&1 && return 0
+  done
+  return 1
+}
 
 # Review. While the reviewers ask for changes, send their report back to the same
 # implementer session: at most 2 fix rounds. Each round's report is a file in runs/.
 review="not run (no commits)"
 rc=0
-if [[ -n "$(git -C "$wt" log --oneline origin/main..HEAD)" ]]; then
+if approved_at "$(git -C "$wt" rev-parse HEAD)"; then
+  review="already approved at this commit"
+elif [[ -n "$(git -C "$wt" log --oneline origin/main..HEAD)" ]]; then
   for round in 0 1 2; do
     report="${receipt%.jsonl}-review-$round.json"
     rc=0
@@ -97,7 +142,11 @@ if [[ -n "$(git -C "$wt" log --oneline origin/main..HEAD)" ]]; then
       (.findings[] | select(.severity == "blocking" or .criterion != "none") | "- \(.where): \(.issue)"),
       "\nFix this on the same branch: cover each case with a test, make it pass, update factory-acceptance.json, commit, then git push -u origin \($branch). The PR updates itself: do not open another.",
       "If you think a point is wrong, change nothing for it and say why in your final line."' "$report")
-    implement "$fix" --resume "$(tail -1 "$receipt" | jq -r .session_id)"
+    if [[ -n "$session" ]]; then
+      implement "$fix" --resume "$session"
+    else
+      implement "$task"$'\n\n'"$fix" # no session found: a fresh implementer, told the task too
+    fi
   done
   # Not approved after the last round: back to draft, so it can't be merged by mistake.
   if ((rc != 0)); then
@@ -106,12 +155,15 @@ if [[ -n "$(git -C "$wt" log --oneline origin/main..HEAD)" ]]; then
   fi
 fi
 
-status=$(tail -1 "$receipt" | jq -r '
-  if .is_error then "ERROR"
-  else (.result // "" | split("\n") | map(select(length > 0)) | last // "no result") end')
+status="no implementer call this run"
+if [[ -f "$receipt" ]]; then
+  status=$(tail -1 "$receipt" | jq -r '
+    if .is_error then "ERROR"
+    else (.result // "" | split("\n") | map(select(length > 0)) | last // "no result") end')
+fi
 # What the implementer claims, per criterion. A claim, not proof: the reviewers check it.
 acc="$wt/factory-acceptance.json"
-if [[ -f "$acc" ]]; then
+if [[ -f "$receipt" && -f "$acc" ]]; then
   cp "$acc" "${receipt%.jsonl}-acceptance.json"
   status="$status · $(jq -r --slurpfile spec "$spec" '
     if map({id, text, check}) != ($spec[0].criteria | map({id, text, check})) then "criteria edited"
