@@ -38,7 +38,7 @@ for i in $(seq 1 "$n"); do
   raw="${out%.json}-r$i.json"
   claude -p "$prompt" \
     --plugin-dir "$bin/.." --agent factory:reviewer \
-    --setting-sources user --settings "$bin/factory-settings.json" \
+    --setting-sources user --settings "$("$bin/settings.sh")" \
     --allowedTools "Bash(pnpm *)" "Bash(git diff *)" "Bash(git log *)" "Bash(git show *)" \
     --permission-mode dontAsk \
     --json-schema "$(cat "$bin/review-schema.json")" \

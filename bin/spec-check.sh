@@ -72,7 +72,7 @@ for f in $(ls -t "$runs/$(basename "$main")-issue-$issue-spec-"*.json 2>/dev/nul
 done
 
 result=$(claude -p "$prompt" \
-  --setting-sources user --settings "$bin/factory-settings.json" \
+  --setting-sources user --settings "$("$bin/settings.sh")" \
   --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --permission-mode dontAsk \
   --json-schema "$(cat "$bin/spec-schema.json")" \
   --max-turns 30 --max-budget-usd 2 --output-format json </dev/null)

@@ -19,7 +19,7 @@ What you find decides the verdict. If you write "no test covers this" or "this g
 
 Then read the whole diff (the command is in your task) and report findings. Each finding names the criterion it shows is not met or not proven, or none.
 
-- blocking: must change before merge. Behaviour the ticket did not ask for or put out of scope, tests weakened, skipped or deleted, a gate broken (a live intervals.icu call, a secret, a check that can never fail).
+- blocking: must change before merge. Behaviour the ticket did not ask for or put out of scope, tests weakened, skipped or deleted, a gate broken (a rule in the repo's AGENTS.md, a live external API call, a secret, a check that can never fail).
 - note: a human should know, and no criterion covers it. Mainly decisions the ticket left open that the code makes; say what it chose.
 
 Do not invent requirements. A case that neither the criteria nor the hints cover is not a gap: at most a note. Do not report style, naming or taste.

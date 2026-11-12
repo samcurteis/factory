@@ -3,7 +3,7 @@
 set -euo pipefail
 bin=$(cd "$(dirname "$0")" && pwd)
 factory=$(cd "$bin/.." && pwd)
-for f in bin/progress.jq bin/factory-settings.json bin/spec-check.sh bin/spec-schema.json bin/gates.md \
+for f in bin/progress.jq bin/factory-settings.json bin/settings.sh hooks/verify-on-stop.sh bin/spec-check.sh bin/spec-schema.json bin/gates.md \
   bin/review.sh bin/review-schema.json roles/implementer.md agents/reviewer.md .claude-plugin/plugin.json; do
   [[ -f "$factory/$f" ]] || {
     echo "missing $factory/$f" >&2
@@ -65,7 +65,7 @@ gh_dir=$(jq -r '.env.GH_CONFIG_DIR // empty' "$repo/.claude/settings.local.json"
 if [[ -n "$gh_dir" ]]; then export GH_CONFIG_DIR="$gh_dir"; fi
 pnpm install --frozen-lockfile --reporter=silent # before Claude starts, outside its sandbox
 
-# Ports per issue, so two runs' e2e servers don't collide.
+# Ports per issue, so two runs' e2e servers don't collide (fitness-tracker reads these; others ignore them).
 export E2E_APP_PORT=$((5000 + issue)) E2E_STUB_PORT=$((6000 + issue))
 
 # Factory files live in the worktree (the write block forbids /tmp). Git ignores them,
@@ -82,10 +82,12 @@ jq '[.criteria[] | {id, text, check, passes: false, evidence: ""}]' "$spec" >fac
 task="Implement GitHub issue #$issue (read it with: gh issue view $issue). Branch: $branch."
 
 # One implementer call, logged to the receipt. Extra flags (a fix round's --resume) follow the prompt.
+# FACTORY_STAGE/FACTORY_DIR switch on the Stop hook in factory-settings.json for this call only:
+# spec check and reviewers share the settings file but must not be gated.
 implement() {
-  claude -p "$@" \
+  FACTORY_STAGE=implement FACTORY_DIR="$factory" claude -p "$@" \
     --append-system-prompt-file "$factory/roles/implementer.md" \
-    --settings "$bin/factory-settings.json" \
+    --settings "$("$bin/settings.sh")" \
     --allowedTools "Read,Edit,Write,Skill" \
     "Bash(gh issue view *)" "Bash(gh issue comment $issue *)" \
     "Bash(gh issue edit $issue --add-label needs-info)" \

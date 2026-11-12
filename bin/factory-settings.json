@@ -18,5 +18,18 @@
       "allowedDomains": [],
       "allowLocalBinding": true
     }
+  },
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "timeout": 600,
+            "command": "[ \"$FACTORY_STAGE\" = implement ] || exit 0; \"$FACTORY_DIR\"/hooks/verify-on-stop.sh"
+          }
+        ]
+      }
+    ]
   }
 }
