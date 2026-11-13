@@ -42,7 +42,7 @@ for i in $(seq 1 "$n"); do
     --allowedTools "Bash(pnpm *)" "Bash(git diff *)" "Bash(git log *)" "Bash(git show *)" \
     --permission-mode dontAsk \
     --json-schema "$(cat "$bin/review-schema.json")" \
-    --max-turns 60 --max-budget-usd 3 --output-format json </dev/null >"$raw" || true
+    --max-turns 60 --max-budget-usd 1 --output-format json </dev/null >"$raw" || true
   if ! jq -e .structured_output "$raw" >/dev/null 2>&1; then
     echo "review: reviewer $i gave no structured output ($raw)" >&2
     exit 2

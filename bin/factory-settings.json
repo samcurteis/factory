@@ -4,6 +4,7 @@
   },
   "sandbox": {
     "enabled": true,
+    "failIfUnavailable": true,
     "allowUnsandboxedCommands": false,
     "autoAllowBashIfSandboxed": false,
     "excludedCommands": [
@@ -17,6 +18,22 @@
     "network": {
       "allowedDomains": [],
       "allowLocalBinding": true
+    },
+    "credentials": {
+      "envVars": [
+        {
+          "name": "GH_TOKEN",
+          "mode": "deny"
+        },
+        {
+          "name": "ANTHROPIC_API_KEY",
+          "mode": "deny"
+        },
+        {
+          "name": "CLAUDE_CODE_OAUTH_TOKEN",
+          "mode": "deny"
+        }
+      ]
     }
   },
   "hooks": {

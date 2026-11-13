@@ -32,6 +32,7 @@ for name in $names; do
         | group_by(.session_id) | map(max_by(.total_cost_usd).total_cost_usd) | add // 0'
     } | jq -s 'add // 0 | . * 100 | round / 100'
   )
-  updated=$(ls -t "$name"[-.]* | head -1 | xargs stat -f '%Sm' -t '%Y-%m-%d %H:%M')
+  newest=$(ls -t "$name"[-.]* | head -1)
+  updated=$(date -r "$newest" '+%Y-%m-%d %H:%M') # -r <file> = its mtime, on BSD and GNU date
   printf '%-28s %-8s %-10s %-28s %8s  %s\n' "$name" "$run" "$spec_state" "$review" "$(printf '$%.2f' "$cost")" "$updated"
 done

@@ -1,0 +1,106 @@
+name: factory-run
+# Reusable: a target repo calls this when an issue gets the `factory` label (see the caller in
+# its own .github/workflows/factory.yml). One issue through spec → implement → review → PR,
+# on a fresh Linux runner. factory-dispatch posts the outcome on the issue, the same way the
+# laptop poller does.
+on:
+  workflow_call:
+    inputs:
+      issue:
+        type: number
+        required: true
+      factory-repo:
+        type: string
+        default: samcurteis/factory
+      factory-ref: # keep equal to the @ref the caller's `uses:` names
+        type: string
+        default: main
+
+permissions:
+  contents: read # GITHUB_TOKEN reads only. Every write goes through FACTORY_GH_TOKEN.
+
+jobs:
+  run:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # The factory-run lock, for runners: one run per issue, a second one waits.
+    concurrency:
+      group: factory-${{ github.repository }}-${{ inputs.issue }}
+      cancel-in-progress: false
+    defaults:
+      run:
+        shell: bash # = bash -eo pipefail. The unnamed default has no pipefail.
+    env:
+      ISSUE: ${{ inputs.issue }}
+      # Named after the repo, so receipts are named as on a laptop (<repo>-issue-N-…).
+      TARGET: ${{ github.event.repository.name }}
+      # gh and git push use it. factory-settings.json unsets it for sandboxed commands.
+      GH_TOKEN: ${{ secrets.FACTORY_GH_TOKEN }}
+    steps:
+      - name: Check out the target
+        uses: actions/checkout@v5
+        with:
+          path: ${{ github.event.repository.name }}
+          fetch-depth: 0 # factory-run compares the branch with main
+          persist-credentials: false # no token in .git/config for an agent to read
+
+      - name: Check out the factory
+        uses: actions/checkout@v5
+        with:
+          repository: ${{ inputs.factory-repo }}
+          ref: ${{ inputs.factory-ref }}
+          path: factory
+          persist-credentials: false
+
+      - uses: pnpm/action-setup@v4
+        with:
+          package_json_file: ${{ github.event.repository.name }}/package.json
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+
+      - name: Install Claude Code and the Linux sandbox
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq bubblewrap socat
+          # Ubuntu 24.04 blocks the user namespaces bubblewrap needs. Lifted for this
+          # throwaway VM only (Claude Code sandboxing docs, troubleshooting).
+          sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+          npm install -g "@anthropic-ai/claude-code@$(cat factory/bin/claude-version)"
+          claude --version
+
+      - name: Credentials
+        env:
+          API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          OAUTH_TOKEN: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+        run: |
+          # Whichever one exists. An API key wins if both do.
+          if [[ -n "$API_KEY" ]]; then echo "ANTHROPIC_API_KEY=$API_KEY" >>"$GITHUB_ENV"
+          elif [[ -n "$OAUTH_TOKEN" ]]; then echo "CLAUDE_CODE_OAUTH_TOKEN=$OAUTH_TOKEN" >>"$GITHUB_ENV"
+          else echo "::error::Set ANTHROPIC_API_KEY or CLAUDE_CODE_OAUTH_TOKEN as a repo secret"; exit 1; fi
+          [[ -n "$GH_TOKEN" ]] || { echo "::error::Set FACTORY_GH_TOKEN as a repo secret"; exit 1; }
+          # git push authenticates through gh, so with GH_TOKEN, and pushes made with it
+          # trigger CI (pushes made with GITHUB_TOKEN don't).
+          gh auth setup-git
+          git config --global user.name "factory"
+          git config --global user.email "factory@users.noreply.github.com"
+
+      - name: factory-dispatch
+        run: factory/bin/factory-dispatch.sh "$GITHUB_WORKSPACE/$TARGET" "$ISSUE" factory
+
+      - name: Clean up after a cancel or timeout
+        if: cancelled()
+        run: |
+          gh issue comment "$ISSUE" --repo "$GITHUB_REPOSITORY" \
+            --body "> *factory-run (cancelled or timed out)* · [log]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID)" || true
+          gh issue edit "$ISSUE" --repo "$GITHUB_REPOSITORY" --remove-label factory --remove-label factory:running || true
+
+      - name: Upload receipts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: factory-runs-issue-${{ inputs.issue }}-attempt-${{ github.run_attempt }}
+          path: factory/runs/
+          retention-days: 14
+          include-hidden-files: false

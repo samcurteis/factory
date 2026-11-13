@@ -12,6 +12,6 @@ Use one plain command per Bash call: no && or ; chains, no redirects, no multi-l
 
 To wait for CI: gh run watch <run-id> --exit-status
 
-When done: commit, push the branch, and open a PR using the pr skill. Write the PR body with the Write tool to factory-pr-body.md in the worktree root, then run: gh pr create --base main --title "<title>" --body-file factory-pr-body.md
+When done: commit, push the branch, and open a PR using the factory:pr skill. Write the PR body with the Write tool to factory-pr-body.md in the worktree root, then run: gh pr create --base main --title "<title>" --body-file factory-pr-body.md
 
 Finish with one line: OK or FAIL, then why.

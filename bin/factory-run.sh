@@ -4,7 +4,7 @@ set -euo pipefail
 bin=$(cd "$(dirname "$0")" && pwd)
 factory=$(cd "$bin/.." && pwd)
 for f in bin/progress.jq bin/factory-settings.json bin/settings.sh hooks/verify-on-stop.sh bin/spec-check.sh bin/spec-schema.json bin/gates.md \
-  bin/review.sh bin/review-schema.json roles/implementer.md agents/reviewer.md .claude-plugin/plugin.json; do
+  bin/review.sh bin/review-schema.json roles/implementer.md agents/reviewer.md .claude-plugin/plugin.json skills/pr/SKILL.md; do
   [[ -f "$factory/$f" ]] || {
     echo "missing $factory/$f" >&2
     exit 1
@@ -86,6 +86,7 @@ task="Implement GitHub issue #$issue (read it with: gh issue view $issue). Branc
 # spec check and reviewers share the settings file but must not be gated.
 implement() {
   FACTORY_STAGE=implement FACTORY_DIR="$factory" claude -p "$@" \
+    --plugin-dir "$factory" \
     --append-system-prompt-file "$factory/roles/implementer.md" \
     --settings "$("$bin/settings.sh")" \
     --allowedTools "Read,Edit,Write,Skill" \
@@ -96,7 +97,7 @@ implement() {
     "Bash(git status *)" "Bash(git diff *)" "Bash(git log *)" \
     "Bash(git add *)" "Bash(git rm *)" "Bash(git commit *)" "Bash(git push -u origin $branch)" \
     --permission-mode dontAsk \
-    --max-turns 100 --max-budget-usd 10 \
+    --max-turns 100 --max-budget-usd 3 \
     --output-format stream-json --verbose |
     tee -a "$receipt" | jq -r --unbuffered -f "$bin/progress.jq" || true
   session=$(jq -r 'select(.type == "result") | .session_id' "$receipt" 2>/dev/null | tail -1)
@@ -174,9 +175,14 @@ fi
 
 status="$status · review: $review"
 
-# Pass the text as arguments, so quotes in $status can't break the AppleScript.
-osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title (item 2 of argv)' \
-  -e 'end run' "$status" "factory-run #$issue"
+# Tell the human. On a Mac: a notification (text as arguments, so quotes can't break the
+# AppleScript). In GitHub Actions: the job summary. Always: the last line of output, which
+# factory-dispatch posts on the issue.
+if command -v osascript >/dev/null; then
+  osascript -e 'on run argv' -e 'display notification (item 1 of argv) with title (item 2 of argv)' \
+    -e 'end run' "$status" "factory-run #$issue"
+fi
+if [[ -n "${GITHUB_STEP_SUMMARY:-}" ]]; then echo "**factory-run #$issue:** $status" >>"$GITHUB_STEP_SUMMARY"; fi
 
 # Everything committed: drop the worktree (the branch stays). Otherwise keep it to inspect.
 if [[ -z "$(git -C "$wt" status --porcelain)" ]]; then
@@ -184,3 +190,4 @@ if [[ -z "$(git -C "$wt" status --porcelain)" ]]; then
 else
   echo "worktree kept for inspection: $wt" >&2
 fi
+echo "$status"

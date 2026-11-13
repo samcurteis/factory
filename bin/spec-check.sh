@@ -24,6 +24,14 @@ section() { awk -v h="$1" '
 # 1. Deterministic checks. Cheap, so they run first; any failure skips the model.
 lint=()
 [[ $(jq -r .state <<<"$json") == OPEN ]] || lint+=("Issue is not open.")
+# Every word the agents will read must come from someone with write access. On a public
+# repo anyone can open or comment on an issue; their text would be instructions to an
+# agent holding your tokens.
+trusted='select(.author_association | IN("OWNER", "MEMBER", "COLLABORATOR") | not) | .user.login'
+for who in $(gh api "repos/{owner}/{repo}/issues/$issue" --jq "$trusted") \
+  $(gh api --paginate "repos/{owner}/{repo}/issues/$issue/comments" --jq ".[] | $trusted"); do
+  lint+=("Text by $who, who has no write access (hiding a comment doesn't remove it from the API). Delete it and repeat what you need yourself; for an issue they opened, open your own copy.")
+done
 if jq -e '.labels[].name | select(. == "needs-info")' <<<"$json" >/dev/null; then
   lint+=("Has needs-info, which lets the Stop hook pass unfinished work. Answer, edit the issue, remove the label.")
 fi
@@ -60,9 +68,11 @@ prompt=$(
     "questions: at most 3 decisions the issue leaves open that the user would notice if guessed wrong (what is shown, which data, what a test expects). Not naming or style. Skip anything the code, ADRs, glossary or linked issues already decide. Fewer is better: an empty list is a good result." \
     "Read the issue as one spec, not as a log of edits: two statements that disagree (often hints added in different rounds) are a question, even if each is clear on its own."
 )
+# sha256sum on Linux, shasum on macOS: same digest.
+sha256() { if command -v sha256sum >/dev/null; then sha256sum; else shasum -a 256; fi; }
 # 3. Skip the model if nothing it reads has changed since its last "ready": same prompt
 #    (issue, comments, linked issues, gates), same schema, same code on main.
-key=$({ printf '%s' "$prompt"; cat "$bin/spec-schema.json"; git rev-parse origin/main; } | shasum -a 256 | cut -c1-16)
+key=$({ printf '%s' "$prompt"; cat "$bin/spec-schema.json"; git rev-parse origin/main; } | sha256 | cut -c1-16)
 for f in $(ls -t "$runs/$(basename "$main")-issue-$issue-spec-"*.json 2>/dev/null); do
   if jq -e --arg key "$key" '.ready and .key == $key' "$f" >/dev/null 2>&1; then
     echo "spec check: inputs unchanged since $(basename "$f"), not asked again" >&2
@@ -75,7 +85,7 @@ result=$(claude -p "$prompt" \
   --setting-sources user --settings "$("$bin/settings.sh")" \
   --tools Read,Grep,Glob --allowedTools Read,Grep,Glob --permission-mode dontAsk \
   --json-schema "$(cat "$bin/spec-schema.json")" \
-  --max-turns 30 --max-budget-usd 2 --output-format json </dev/null)
+  --max-turns 30 --max-budget-usd 1 --output-format json </dev/null)
 if ! jq -e .structured_output <<<"$result" >/dev/null; then
   echo "spec check: no structured output" >&2
   exit 1
