@@ -32,8 +32,10 @@ grep -vE '^[[:space:]]*(#|$)' "$factory/targets" | while read -r slug; do
     mkdir -p "$clones"
     gh repo clone "$slug" "$dir" -- -q || { log "$slug: clone failed"; continue; }
   fi
-  gh label create factory-local -R "$slug" --color 1d76db \
-    --description "Run this issue through the factory on the laptop" >/dev/null 2>&1 || true
+  # --force: create or update, so it succeeds when the label exists and only fails for real.
+  gh label create factory-local -R "$slug" --force --color 1d76db \
+    --description "Run this issue through the factory on the laptop" >/dev/null ||
+    { log "$slug: can't create the factory-local label (gh auth status?)"; continue; }
   for n in $(gh issue list -R "$slug" --label factory-local --state open --json number -q '.[].number'); do
     # Same rule as the Actions caller: only the owner's label starts a run.
     who=$(gh api --paginate "repos/$slug/issues/$n/events" \

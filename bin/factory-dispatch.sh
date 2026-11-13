@@ -23,7 +23,7 @@ marker="$runs/.dispatch-$$"
 touch "$marker"
 trap 'rm -f "$marker"' EXIT
 
-gh label create factory:running --color fbca04 --description "The factory is working on this issue" >/dev/null 2>&1 || true
+gh label create factory:running --force --color fbca04 --description "The factory is working on this issue" >/dev/null || true
 gh issue edit "$issue" --add-label factory:running >/dev/null || true
 
 start=$(date +%s)

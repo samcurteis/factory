@@ -41,7 +41,9 @@ cat >"$units/factory-poll.timer" <<UNIT
 Description=Factory: poll for factory-local issues every 5 minutes
 
 [Timer]
-OnStartupSec=1min
+# OnActiveSec: first poll 1 min after the timer starts (login, or enable --now).
+# OnUnitInactiveSec: then 5 min after each poll finishes, so polls never overlap.
+OnActiveSec=1min
 OnUnitInactiveSec=5min
 
 [Install]
