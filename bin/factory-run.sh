@@ -4,7 +4,7 @@ set -euo pipefail
 bin=$(cd "$(dirname "$0")" && pwd)
 factory=$(cd "$bin/.." && pwd)
 for f in bin/progress.jq bin/factory-settings.json bin/settings.sh hooks/verify-on-stop.sh bin/spec-check.sh bin/spec-schema.json bin/gates.md \
-  bin/review.sh bin/review-schema.json roles/implementer.md agents/reviewer.md .claude-plugin/plugin.json skills/pr/SKILL.md; do
+  bin/review.sh bin/review-schema.json roles/implementer.md plugin/agents/reviewer.md plugin/.claude-plugin/plugin.json plugin/skills/pr/SKILL.md; do
   [[ -f "$factory/$f" ]] || {
     echo "missing $factory/$f" >&2
     exit 1
@@ -64,6 +64,10 @@ cd "$wt"
 gh_dir=$(jq -r '.env.GH_CONFIG_DIR // empty' "$repo/.claude/settings.local.json" 2>/dev/null || true)
 if [[ -n "$gh_dir" ]]; then export GH_CONFIG_DIR="$gh_dir"; fi
 pnpm install --frozen-lockfile --reporter=silent # before Claude starts, outside its sandbox
+# From here on, pnpm runs whatever version is installed instead of switching to the repo's
+# packageManager pin: switching takes a lock in the pnpm store, which the sandbox makes
+# read-only (ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK). CI installs the pinned version anyway.
+export npm_config_manage_package_manager_versions=false
 
 # Ports per issue, so two runs' e2e servers don't collide (fitness-tracker reads these; others ignore them).
 export E2E_APP_PORT=$((5000 + issue)) E2E_STUB_PORT=$((6000 + issue))
@@ -86,7 +90,7 @@ task="Implement GitHub issue #$issue (read it with: gh issue view $issue). Branc
 # spec check and reviewers share the settings file but must not be gated.
 implement() {
   FACTORY_STAGE=implement FACTORY_DIR="$factory" claude -p "$@" \
-    --plugin-dir "$factory" \
+    --plugin-dir "$factory/plugin" \
     --append-system-prompt-file "$factory/roles/implementer.md" \
     --settings "$("$bin/settings.sh")" \
     --allowedTools "Read,Edit,Write,Skill" \
