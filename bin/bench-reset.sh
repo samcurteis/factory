@@ -39,7 +39,7 @@ for b in $(git ls-remote --heads origin 'factory/*' | sed 's|.*refs/heads/||'); 
 done
 for wt in "$factory/worktrees/$(basename "$repo")"-issue-*; do
   if [[ -d "$wt" ]]; then
-    git worktree remove --force "$wt"
+    git -C "$wt" worktree remove --force "$wt" # via its own repo: the poller's clone owns some
     echo "removed worktree $wt"
   fi
 done
